@@ -10,15 +10,25 @@ dados parciais; falhas não tratadas caem num **Error Workflow** dedicado.
 
 ### Início rápido
 
-Pré-requisitos: Docker com Compose v2, bash, curl e a porta 5678 livre.
+Pré-requisitos: Docker com Compose v2, git, bash, curl e a porta 5678 livre.
+
+Abra um **terminal** (no Windows, o terminal do **WSL2**) e rode os comandos abaixo, um de cada vez:
 
 ```bash
-bash scripts/setup.sh    # sobe n8n + PostgreSQL, importa e ativa os workflows (~5 min na 1ª vez)
-bash scripts/testar.sh   # 13 cenários; esperado: "Resultado: 13 passaram, 0 falharam"
+# 1. Baixar o projeto e entrar na pasta dele
+git clone https://github.com/GabrielVini03/desafio-n8n-leads-b2b.git
+cd desafio-n8n-leads-b2b
+
+# 2. Subir n8n + PostgreSQL, importar e ativar os workflows (~5 min na primeira vez)
+bash scripts/setup.sh
+
+# 3. Rodar os 13 cenários de teste (esperado: "Resultado: 13 passaram, 0 falharam")
+bash scripts/testar.sh
 ```
 
-UI em **http://localhost:5678** · Webhook em `POST http://localhost:5678/webhook/lead-b2b` ·
-passo a passo completo, com o que conferir em cada etapa, na [seção 4](#4-guia-de-replicação-passo-a-passo).
+Depois, abra **http://localhost:5678** no navegador para ver os workflows. O webhook fica em
+`POST http://localhost:5678/webhook/lead-b2b`. O passo a passo completo, com o que conferir em
+cada etapa, está na [seção 4](#4-guia-de-replicação-passo-a-passo).
 
 ---
 
@@ -99,6 +109,7 @@ Tempo estimado: 5 a 10 minutos. A primeira execução baixa cerca de 1,3 GB de i
 | Ferramenta | Como conferir | Observação |
 |---|---|---|
 | Docker com Compose v2 | `docker compose version` | Docker Desktop (Windows/macOS) ou Docker Engine (Linux) |
+| git | `git --version` | Para clonar o repositório. Sem git: no GitHub, **Code → Download ZIP** |
 | bash e curl | `bash --version` · `curl --version` | **Windows:** rode os comandos dentro do **WSL2** (recomendado) ou do Git Bash |
 | Porta 5678 livre | — | Se estiver ocupada, veja o passo 2 |
 | Acesso à internet | — | Download das imagens, ViaCEP e BrasilAPI |
@@ -107,6 +118,8 @@ Tempo estimado: 5 a 10 minutos. A primeira execução baixa cerca de 1,3 GB de i
 > (`sudo usermod -aG docker $USER`, depois abra um novo terminal) ou rode os scripts com `sudo`.
 
 ### Passo 2: obter o projeto (e ajustar a configuração, se precisar)
+
+Todos os comandos deste guia são digitados num **terminal** (no Windows, o do WSL2).
 
 ```bash
 git clone https://github.com/GabrielVini03/desafio-n8n-leads-b2b.git
@@ -121,6 +134,8 @@ cp .env.example .env    # depois edite; ex.: HOST_PORT=5680 se a 5678 estiver oc
 ```
 
 ### Passo 3: subir o ambiente
+
+No terminal, **dentro da pasta do projeto** (onde você entrou com `cd` no passo 2):
 
 ```bash
 bash scripts/setup.sh
