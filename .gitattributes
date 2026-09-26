@@ -1,0 +1,7 @@
+# Scripts e configs precisam de LF mesmo quando o repositório é clonado no Windows:
+# com CRLF o bash falha ($'\r': command not found) e o .env ganha \r nos valores.
+*.sh          text eol=lf
+*.sql         text eol=lf
+*.json        text eol=lf
+*.yml         text eol=lf
+.env.example  text eol=lf

@@ -1,0 +1,137 @@
+{
+  "name": "Lead B2B - Error Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "85c54f3d-93bf-4a55-a92a-190bf88980e0",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normaliza o payload do Error Trigger num registro estruturado de log.\nconst esc = (valor) => String(valor ?? '—')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\n\nconst registro = {\n  erro_global: true,\n  workflow: $json.workflow?.name ?? null,\n  execucao_id: $json.execution?.id ?? null,\n  execucao_url: $json.execution?.url ?? null,\n  ultimo_no: $json.execution?.lastNodeExecuted ?? null,\n  mensagem: $json.execution?.error?.message ?? 'Erro desconhecido',\n  modo: $json.execution?.mode ?? null,\n  registrado_em: new Date().toISOString()\n};\n\nregistro.texto = [\n  '🚨 <b>Falha não tratada no workflow</b>',\n  '',\n  `⚙️ ${esc(registro.workflow)}`,\n  `🧩 Nó: ${esc(registro.ultimo_no)}`,\n  `❌ ${esc(registro.mensagem)}`,\n  `🆔 Execução ${esc(registro.execucao_id)}`\n].join('\\n');\n\nreturn registro;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "d70c73e6-6c8a-45b3-a39d-f4b6cc72b518",
+      "name": "Registrar Erro Global"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "31b8dd4a-0f69-4304-b6dc-ed6fd3465a3c",
+              "leftValue": "={{ Boolean($env.TELEGRAM_BOT_TOKEN && $env.TELEGRAM_CHAT_ID) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        480,
+        0
+      ],
+      "id": "b8740339-95f4-486c-98fd-0bce61aee6fe",
+      "name": "Telegram Configurado?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TELEGRAM_API_BASE_URL }}/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, text: $json.texto, parse_mode: 'HTML' }) }}",
+        "options": {
+          "timeout": "={{ Number($env.HTTP_TIMEOUT_MS) || 5000 }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "f8e8a51b-ccc8-4286-8ea4-2aa415417d82",
+      "name": "Notificar Erro no Telegram",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Registrar Erro Global",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Erro Global": {
+      "main": [
+        [
+          {
+            "node": "Telegram Configurado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Configurado?": {
+      "main": [
+        [
+          {
+            "node": "Notificar Erro no Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b27760cb-b211-4461-9990-cd19188f107a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "34f7a99a752d8e9a2d534ac64b4b1c41643607584990e840fc748e2b3bb4ccb8"
+  },
+  "nodeGroups": [],
+  "id": "pB37UWtTRAfDsjp1",
+  "tags": []
+}

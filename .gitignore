@@ -1,0 +1,2 @@
+# Segredos locais (token do Telegram, senha do banco). Use o .env.example como base.
+.env

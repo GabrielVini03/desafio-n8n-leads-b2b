@@ -1,0 +1,984 @@
+{
+  "name": "Lead B2B - Processamento e Roteamento",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ① Entrada e validação\nWebhook POST com corpo cru → JSON válido e campos obrigatórios → trim, CEP, CNPJ (módulo 11) e e-mail (regex).\n\nQualquer falha → **HTTP 400** indicando o campo reprovado.",
+        "height": 720,
+        "width": 1440,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        -368
+      ],
+      "id": "823ebb31-d58b-4dc6-a107-c2b0dd19c6ea",
+      "name": "① Entrada e validação"
+    },
+    {
+      "parameters": {
+        "content": "## ② Idempotência\nBarreira por CNPJ no Postgres (INSERT ... ON CONFLICT atômico).\n\nMesmo CNPJ dentro da janela → **HTTP 409**, sem chamar as APIs.",
+        "height": 720,
+        "width": 700,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        -368
+      ],
+      "id": "e56b8a93-9734-4b0e-8c16-7d051650897c",
+      "name": "② Idempotência"
+    },
+    {
+      "parameters": {
+        "content": "## ③ Enriquecimento\nViaCEP (município/UF) e BrasilAPI (razão social, situação, UF de registro).\n\nTimeout + 3 tentativas. Falha → segue com dados parciais e `enriquecimento_incompleto: true`.",
+        "height": 720,
+        "width": 940,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        -368
+      ],
+      "id": "26a76d30-d5a8-45ab-87e3-72c20f7cac43",
+      "name": "③ Enriquecimento"
+    },
+    {
+      "parameters": {
+        "content": "## ④ Roteamento por UF\nSP/RJ/MG/ES → Sul/Sudeste · demais UFs → Geral · UF não determinada → exceção operacional.",
+        "height": 720,
+        "width": 740,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        -368
+      ],
+      "id": "e32cfc9f-0591-42eb-a4a5-1a3c12866df3",
+      "name": "④ Roteamento por UF"
+    },
+    {
+      "parameters": {
+        "content": "## ⑤ Persistência, resposta e notificação\nGrava o lead no Postgres → responde ao cliente (200 ou 202 na exceção) → alerta no Telegram **depois** da resposta, sem somar latência ao cliente.",
+        "height": 720,
+        "width": 1380,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3808,
+        -368
+      ],
+      "id": "8919526a-a1b2-48d5-b37b-0b92d30baf15",
+      "name": "⑤ Persistência, resposta e notificação"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-b2b",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryData": true,
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "584faa3d-d7df-4308-aaa0-20ed01a6d12f",
+      "name": "Receber Lead B2B",
+      "webhookId": "1c503a3c-ec8e-44db-bdb2-87df50308f0e"
+    },
+    {
+      "parameters": {
+        "jsCode": "// O Webhook entrega o corpo cru (binário) para que JSON malformado seja\n// tratado aqui com HTTP 400, e não pelo parser nativo do n8n (que devolve 422).\nconst requiredFields = [\n  'empresa',\n  'cnpj',\n  'email',\n  'cep',\n  'valor_estimado',\n];\n\nconst resultado = (errors, payload = null) => [{\n  json: { valid: errors.length === 0, errors, payload },\n}];\n\nlet corpoCru = '';\n\nif ($input.first().binary?.data) {\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  corpoCru = buffer.toString('utf8').replace(/^﻿/, '').trim();\n}\n\n// Corpo vazio vira objeto vazio: todos os campos aparecem como ausentes.\nlet body = {};\n\nif (corpoCru.length > 0) {\n  try {\n    body = JSON.parse(corpoCru);\n  } catch (error) {\n    return resultado([{\n      field: 'body',\n      message: `JSON malformado: ${error.message}`\n    }]);\n  }\n}\n\nif (!body || typeof body !== 'object' || Array.isArray(body)) {\n  return resultado([{\n    field: 'body',\n    message: 'O corpo da requisição deve ser um objeto JSON.'\n  }]);\n}\n\nconst errors = [];\n\nfor (const field of requiredFields) {\n  if (!(field in body)) {\n    errors.push({\n      field,\n      message: `Campo obrigatório ausente: ${field}.`\n    });\n  }\n}\n\nreturn resultado(errors, body);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "56d53c9e-6a18-42eb-a3ac-c3efc8283fad",
+      "name": "Validar Estrutura do Payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1f199352-566c-49e3-a131-e8509d984f8b",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        480,
+        0
+      ],
+      "id": "edc75888-0c87-4b63-8231-2f62e0fede11",
+      "name": "Payload Válido?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: false,\n  status: 400,\n  errors: $json.errors\n} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        720,
+        240
+      ],
+      "id": "45753e98-64a8-47cb-a309-8304f1710965",
+      "name": "Responder Erro 400"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const payload = $json.payload;\n\nconst errors = [];\n\n// =========================\n// 1. Sanitização de strings\n// =========================\nconst empresa = typeof payload.empresa === 'string'\n  ? payload.empresa.trim()\n  : payload.empresa;\n\nconst email = typeof payload.email === 'string'\n  ? payload.email.trim()\n  : payload.email;\n\nconst cnpj = typeof payload.cnpj === 'string'\n  ? payload.cnpj.trim()\n  : payload.cnpj;\n\nconst cep = typeof payload.cep === 'string'\n  ? payload.cep.trim()\n  : payload.cep;\n\n// =========================\n// 2. Validação de empresa\n// =========================\nif (typeof empresa !== 'string' || empresa.length === 0) {\n  errors.push({\n    field: 'empresa',\n    message: 'Empresa deve ser uma string não vazia.'\n  });\n}\n\n// =========================\n// 3. Normalização do CEP\n// =========================\nlet cepNormalizado = '';\n\nif (typeof cep === 'string') {\n  cepNormalizado = cep.replace(/\\D/g, '');\n}\n\nif (!/^\\d{8}$/.test(cepNormalizado)) {\n  errors.push({\n    field: 'cep',\n    message: 'CEP deve conter exatamente 8 dígitos.'\n  });\n}\n\n// =========================\n// 4. Normalização e validação CNPJ\n// =========================\nlet cnpjNormalizado = '';\n\nif (typeof cnpj === 'string') {\n  cnpjNormalizado = cnpj.replace(/\\D/g, '');\n}\n\nfunction validarCNPJ(cnpj) {\n  if (!/^\\d{14}$/.test(cnpj)) {\n    return false;\n  }\n\n  // Rejeita sequências como 00000000000000, 11111111111111 etc.\n  if (/^(\\d)\\1{13}$/.test(cnpj)) {\n    return false;\n  }\n\n  // Primeiro dígito verificador\n  let soma = 0;\n  let peso = 5;\n\n  for (let i = 0; i < 12; i++) {\n    soma += Number(cnpj[i]) * peso;\n    peso = peso === 2 ? 9 : peso - 1;\n  }\n\n  let resto = soma % 11;\n  const dv1 = resto < 2 ? 0 : 11 - resto;\n\n  if (dv1 !== Number(cnpj[12])) {\n    return false;\n  }\n\n  // Segundo dígito verificador\n  soma = 0;\n  peso = 6;\n\n  for (let i = 0; i < 13; i++) {\n    soma += Number(cnpj[i]) * peso;\n    peso = peso === 2 ? 9 : peso - 1;\n  }\n\n  resto = soma % 11;\n  const dv2 = resto < 2 ? 0 : 11 - resto;\n\n  return dv2 === Number(cnpj[13]);\n}\n\nif (!validarCNPJ(cnpjNormalizado)) {\n  errors.push({\n    field: 'cnpj',\n    message: 'CNPJ inválido.'\n  });\n}\n\n// =========================\n// 5. Validação de e-mail\n// =========================\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (\n  typeof email !== 'string' ||\n  !emailRegex.test(email)\n) {\n  errors.push({\n    field: 'email',\n    message: 'E-mail inválido.'\n  });\n}\n\n// =========================\n// 6. Validação do valor\n// =========================\nconst valor = payload.valor_estimado;\n\nif (\n  typeof valor !== 'number' ||\n  !Number.isFinite(valor) ||\n  valor < 0\n) {\n  errors.push({\n    field: 'valor_estimado',\n    message: 'Valor estimado deve ser um número válido maior ou igual a zero.'\n  });\n}\n\n// =========================\n// Resultado\n// =========================\nreturn {\n  valid: errors.length === 0,\n  errors,\n  payload: {\n    empresa,\n    cnpj: cnpjNormalizado,\n    email,\n    cep: cepNormalizado,\n    valor_estimado: valor\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "6a29cac6-0f87-4797-ac7b-6ce10fdcfada",
+      "name": "Sanitizar e Validar Dados"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a0624869-9212-4397-9c69-4eabd7bc04bd",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        960,
+        0
+      ],
+      "id": "1488b108-394f-4cd6-9e9f-a8cd60e060e9",
+      "name": "Dados Cadastrais Válidos?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: false,\n  status: 400,\n  errors: $json.errors\n} }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1200,
+        240
+      ],
+      "id": "1947be3e-aa1c-4985-8ad0-1ff56ecc3078",
+      "name": "Responder Erro de Validação"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO lead_idempotencia (cnpj, recebido_em)\nVALUES ($1, now())\nON CONFLICT (cnpj) DO UPDATE\n  SET recebido_em = EXCLUDED.recebido_em\n  WHERE lead_idempotencia.recebido_em < now() - make_interval(secs => $2)\nRETURNING cnpj, recebido_em;",
+        "options": {
+          "queryReplacement": "={{ [ $json.payload.cnpj, Number($env.IDEMPOTENCIA_JANELA_SEGUNDOS) || 300 ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1440,
+        0
+      ],
+      "id": "e86e703e-4ca7-4bc4-8b49-69fed3ffc025",
+      "name": "Verificar Duplicidade",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "PgLeadsLocal0001",
+          "name": "Postgres Leads"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d631ccb7-9aa3-4b81-a041-2797bf235636",
+              "leftValue": "={{ $json.cnpj }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1680,
+        0
+      ],
+      "id": "e18b2513-3961-4bd1-804e-0e8e7ccbc00c",
+      "name": "Lead Novo?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: false,\n  status: 409,\n  erro: {\n    tipo: 'LEAD_DUPLICADO',\n    mensagem: 'Um lead com este CNPJ já foi recebido recentemente. Nenhum processamento duplicado foi executado.'\n  },\n  cnpj: $('Sanitizar e Validar Dados').item.json.payload.cnpj,\n  janela_segundos: Number($env.IDEMPOTENCIA_JANELA_SEGUNDOS) || 300\n} }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1920,
+        240
+      ],
+      "id": "fcd2fbfe-7e58-443e-bc47-d581bf58fe8c",
+      "name": "Responder Lead Duplicado"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.VIACEP_BASE_URL }}/ws/{{ $('Sanitizar e Validar Dados').item.json.payload.cep }}/json/",
+        "options": {
+          "timeout": "={{ Number($env.HTTP_TIMEOUT_MS) || 5000 }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2160,
+        0
+      ],
+      "id": "3005e0dc-aede-4289-be7a-1c5683a47899",
+      "name": "Consultar ViaCEP",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "maxTries": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const dadosOriginais = $('Sanitizar e Validar Dados').item.json;\n\nconst dadosViaCEP = $json;\n\nreturn {\n  json: {\n    payload: dadosOriginais.payload,\n    viacep: dadosViaCEP\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -128
+      ],
+      "id": "ea1a28ad-a81d-4227-8b51-7b07f78c39b2",
+      "name": "Consolidar Dados do ViaCEP"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const dadosOriginais = $('Sanitizar e Validar Dados').item.json;\n\nreturn {\n  payload: dadosOriginais.payload,\n  viacep: null,\n  enriquecimento_incompleto: true,\n  erro_enriquecimento: {\n    servico: 'ViaCEP',\n    mensagem: 'Não foi possível obter os dados do CEP.'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        128
+      ],
+      "id": "350d3814-9303-410e-9107-a2f5ad02629a",
+      "name": "Tratar Falha ViaCEP"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.BRASILAPI_BASE_URL }}/api/cnpj/v1/{{ $('Sanitizar e Validar Dados').item.json.payload.cnpj }}",
+        "options": {
+          "timeout": "={{ Number($env.HTTP_TIMEOUT_MS) || 5000 }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2640,
+        0
+      ],
+      "id": "4d6f1f92-ef94-40ec-a5da-6a4b8957cb88",
+      "name": "Consultar BrasilAPI",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "maxTries": 3,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const dadosOriginais = $('Sanitizar e Validar Dados').item.json;\n\nconst viaCEPExecutado = $('Consolidar Dados do ViaCEP').isExecuted;\n\nconst dadosViaCEP = viaCEPExecutado\n  ? $('Consolidar Dados do ViaCEP').item.json.viacep\n  : null;\n\nconst dadosBrasilAPI = $json;\n\nconst falhas = viaCEPExecutado ? [] : ['ViaCEP'];\n\nreturn {\n  payload: dadosOriginais.payload,\n  viacep: dadosViaCEP,\n  brasilapi: dadosBrasilAPI,\n  enriquecimento_incompleto: falhas.length > 0,\n  falhas_enriquecimento: falhas\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        -128
+      ],
+      "id": "d818c47d-b9d3-4be6-992e-37cfe5b42b64",
+      "name": "Consolidar Dados Enriquecidos"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const dadosOriginais = $('Sanitizar e Validar Dados').item.json;\n\nconst viaCEPExecutado = $('Consolidar Dados do ViaCEP').isExecuted;\n\nconst dadosViaCEP = viaCEPExecutado\n  ? $('Consolidar Dados do ViaCEP').item.json.viacep\n  : null;\n\nconst falhas = viaCEPExecutado ? ['BrasilAPI'] : ['ViaCEP', 'BrasilAPI'];\n\nreturn {\n  payload: dadosOriginais.payload,\n  viacep: dadosViaCEP,\n  brasilapi: null,\n  enriquecimento_incompleto: true,\n  falhas_enriquecimento: falhas\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        128
+      ],
+      "id": "510c00ff-320c-4979-a336-91ee6ef0dfce",
+      "name": "Tratar Falha BrasilAPI"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e5bf56a2-c738-4421-aeed-720d12f42579",
+              "leftValue": "={{ $json.viacep.uf }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3120,
+        0
+      ],
+      "id": "f9346bba-6d23-4cfa-99a5-ac2505be808f",
+      "name": "UF identificada?"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.viacep.uf }}",
+                    "rightValue": "^(SP|RJ|MG|ES)$",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "id": "14720992-45f9-42eb-b246-20e64f99320f"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Sul/Sudeste"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        3360,
+        -128
+      ],
+      "id": "0a492b32-f8ad-4cf7-a72a-85be3c1aca67",
+      "name": "Roteamento por UF"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  ...$json,\n  rota: 'SUL_SUDESTE',\n  roteamento: 'Direcionar para Time Comercial Sul/Sudeste'\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        -240
+      ],
+      "id": "c1d85d06-1a19-405f-8d51-b8d30376b426",
+      "name": "Definir Roteamento Sul/Sudeste"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  ...$json,\n  rota: 'GERAL',\n  roteamento: 'Direcionar para Time Comercial Geral'\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        -48
+      ],
+      "id": "54c42c0d-1f2d-4721-a714-6712de61d968",
+      "name": "Definir Roteamento Geral"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  ...$json,\n  rota: 'EXCECAO_OPERACIONAL',\n  roteamento: 'Exceção operacional',\n  erro: {\n    tipo: 'LOCALIZACAO_NAO_DETERMINADA',\n    mensagem: 'Não foi possível determinar a Unidade Federativa a partir do CEP. Lead registrado para triagem manual.'\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        160
+      ],
+      "id": "2a966b31-1285-4469-b12e-c6878af05e50",
+      "name": "Registrar Exceção de Localização"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Ponto único de convergência das três rotas (Sul/Sudeste, Geral e exceção):\n// monta o registro que vai para o banco e o corpo da resposta HTTP.\nconst excecao = $json.rota === 'EXCECAO_OPERACIONAL';\nconst viacep = $json.viacep?.erro ? null : $json.viacep;\nconst brasilapi = $json.brasilapi ?? null;\n\nconst registro = {\n  empresa: $json.payload.empresa,\n  razao_social: brasilapi?.razao_social ?? null,\n  cnpj: $json.payload.cnpj,\n  email: $json.payload.email,\n  cep: $json.payload.cep,\n  valor_estimado: $json.payload.valor_estimado,\n  municipio: viacep?.localidade ?? null,\n  uf: viacep?.uf ?? null,\n  uf_registro: brasilapi?.uf ?? null,\n  situacao_cadastral: brasilapi?.descricao_situacao_cadastral ?? null,\n  rota: $json.rota,\n  roteamento: $json.roteamento,\n  enriquecimento_incompleto: $json.enriquecimento_incompleto === true,\n  falhas_enriquecimento: $json.falhas_enriquecimento ?? []\n};\n\n// 200 = roteado automaticamente; 202 = aceito e registrado, mas vai para triagem manual.\nconst httpStatus = excecao ? 202 : 200;\n\nconst resposta = {\n  success: !excecao,\n  status: httpStatus,\n  roteamento: registro.roteamento,\n  municipio: registro.municipio,\n  uf: registro.uf,\n  situacao_cadastral: registro.situacao_cadastral,\n  razao_social: registro.razao_social,\n  enriquecimento_incompleto: registro.enriquecimento_incompleto,\n  falhas_enriquecimento: registro.falhas_enriquecimento\n};\n\nif (excecao) {\n  resposta.erro = $json.erro;\n}\n\nreturn {\n  http_status: httpStatus,\n  registro,\n  resposta,\n  erro: $json.erro ?? null,\n  dados_enriquecidos: {\n    viacep: $json.viacep ?? null,\n    brasilapi\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        0
+      ],
+      "id": "240b8226-233f-4eb9-89cd-e12084a0b580",
+      "name": "Montar Resultado do Lead"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO leads (\n  execucao_n8n, empresa, razao_social, cnpj, email, cep, valor_estimado,\n  municipio, uf, uf_registro, situacao_cadastral, rota,\n  enriquecimento_incompleto, dados_enriquecidos\n) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [\n  $execution.id,\n  $json.registro.empresa,\n  $json.registro.razao_social,\n  $json.registro.cnpj,\n  $json.registro.email,\n  $json.registro.cep,\n  $json.registro.valor_estimado,\n  $json.registro.municipio,\n  $json.registro.uf,\n  $json.registro.uf_registro,\n  $json.registro.situacao_cadastral,\n  $json.registro.rota,\n  $json.registro.enriquecimento_incompleto,\n  $json.dados_enriquecidos\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4080,
+        0
+      ],
+      "id": "6e3ac37d-7e6a-4c1b-86ff-44bf3437691b",
+      "name": "Gravar Lead no Banco",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "postgres": {
+          "id": "PgLeadsLocal0001",
+          "name": "Postgres Leads"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ...$('Montar Resultado do Lead').item.json.resposta, lead_id: $json.id ?? null } }}",
+        "options": {
+          "responseCode": "={{ $('Montar Resultado do Lead').item.json.http_status }}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4320,
+        0
+      ],
+      "id": "c4fd01e8-9c5a-4736-999e-bea2204d0fd7",
+      "name": "Responder ao Cliente"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "396c8be2-8c02-4c09-a9c7-f0a0be44672f",
+              "leftValue": "={{ Boolean($env.TELEGRAM_BOT_TOKEN && $env.TELEGRAM_CHAT_ID) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4560,
+        0
+      ],
+      "id": "f13143a8-6fce-4d44-935d-299ad5841791",
+      "name": "Telegram Configurado?"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resultado = $('Montar Resultado do Lead').item.json;\nconst r = resultado.registro;\nconst leadId = $('Gravar Lead no Banco').item.json.id;\n\n// parse_mode HTML do Telegram: dados vindos do formulário precisam ser escapados.\nconst esc = (valor) => String(valor ?? '—')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\n\nconst cnpj = r.cnpj.replace(/^(\\d{2})(\\d{3})(\\d{3})(\\d{4})(\\d{2})$/, '$1.$2.$3/$4-$5');\nconst valor = Number(r.valor_estimado).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\n\nconst linhas = [\n  r.rota === 'EXCECAO_OPERACIONAL' ? '⚠️ <b>Lead em exceção operacional</b>' : '🆕 <b>Novo lead B2B</b>',\n  '',\n  `🏢 <b>${esc(r.empresa)}</b>`,\n  `🧾 CNPJ ${esc(cnpj)} · ${esc(r.situacao_cadastral)}`,\n  `📍 ${esc(r.municipio)}/${esc(r.uf)}`,\n  `💰 ${esc(valor)}`,\n  `✉️ ${esc(r.email)}`,\n  '',\n  `➡️ <b>${esc(r.roteamento)}</b>`\n];\n\nif (r.enriquecimento_incompleto) {\n  linhas.push(`⚠️ Enriquecimento incompleto: ${esc(r.falhas_enriquecimento.join(', '))}`);\n}\n\nif (resultado.erro) {\n  linhas.push(`❗ ${esc(resultado.erro.mensagem)}`);\n}\n\n// Sem id = a gravação falhou (fail-open); o alerta deixa isso visível.\nlinhas.push(leadId\n  ? `🆔 <code>${esc(leadId)}</code>`\n  : '🗄️ ⚠️ Lead não foi gravado no banco');\n\nreturn { texto: linhas.join('\\n') };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4800,
+        0
+      ],
+      "id": "cdbfd21d-b981-4543-8c5d-9f053a76d3f1",
+      "name": "Formatar Alerta do Lead"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TELEGRAM_API_BASE_URL }}/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, text: $json.texto, parse_mode: 'HTML' }) }}",
+        "options": {
+          "timeout": "={{ Number($env.HTTP_TIMEOUT_MS) || 5000 }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5040,
+        0
+      ],
+      "id": "9bf9a081-ec5f-49fe-959e-b60800029754",
+      "name": "Notificar Novo Lead no Telegram",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receber Lead B2B": {
+      "main": [
+        [
+          {
+            "node": "Validar Estrutura do Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Estrutura do Payload": {
+      "main": [
+        [
+          {
+            "node": "Payload Válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Válido?": {
+      "main": [
+        [
+          {
+            "node": "Sanitizar e Validar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Erro 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitizar e Validar Dados": {
+      "main": [
+        [
+          {
+            "node": "Dados Cadastrais Válidos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dados Cadastrais Válidos?": {
+      "main": [
+        [
+          {
+            "node": "Verificar Duplicidade",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Erro de Validação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Duplicidade": {
+      "main": [
+        [
+          {
+            "node": "Lead Novo?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar ViaCEP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Novo?": {
+      "main": [
+        [
+          {
+            "node": "Consultar ViaCEP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Lead Duplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar ViaCEP": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Dados do ViaCEP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tratar Falha ViaCEP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Dados do ViaCEP": {
+      "main": [
+        [
+          {
+            "node": "Consultar BrasilAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratar Falha ViaCEP": {
+      "main": [
+        [
+          {
+            "node": "Consultar BrasilAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar BrasilAPI": {
+      "main": [
+        [
+          {
+            "node": "Consolidar Dados Enriquecidos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tratar Falha BrasilAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar Dados Enriquecidos": {
+      "main": [
+        [
+          {
+            "node": "UF identificada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratar Falha BrasilAPI": {
+      "main": [
+        [
+          {
+            "node": "UF identificada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UF identificada?": {
+      "main": [
+        [
+          {
+            "node": "Roteamento por UF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar Exceção de Localização",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Roteamento por UF": {
+      "main": [
+        [
+          {
+            "node": "Definir Roteamento Sul/Sudeste",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Definir Roteamento Geral",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Roteamento Sul/Sudeste": {
+      "main": [
+        [
+          {
+            "node": "Montar Resultado do Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir Roteamento Geral": {
+      "main": [
+        [
+          {
+            "node": "Montar Resultado do Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar Exceção de Localização": {
+      "main": [
+        [
+          {
+            "node": "Montar Resultado do Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Resultado do Lead": {
+      "main": [
+        [
+          {
+            "node": "Gravar Lead no Banco",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar Lead no Banco": {
+      "main": [
+        [
+          {
+            "node": "Responder ao Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder ao Cliente": {
+      "main": [
+        [
+          {
+            "node": "Telegram Configurado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Configurado?": {
+      "main": [
+        [
+          {
+            "node": "Formatar Alerta do Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatar Alerta do Lead": {
+      "main": [
+        [
+          {
+            "node": "Notificar Novo Lead no Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "errorWorkflow": "pB37UWtTRAfDsjp1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "919a4ef4-79eb-4626-8526-fcba35aceb2f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "34f7a99a752d8e9a2d534ac64b4b1c41643607584990e840fc748e2b3bb4ccb8"
+  },
+  "nodeGroups": [],
+  "id": "hIhRkh6i2GPFRGRg",
+  "tags": []
+}
