@@ -4,7 +4,7 @@ Workflow que recebe leads de empresas por webhook, valida os dados, consulta CEP
 públicas (ViaCEP e BrasilAPI), decide para qual time comercial o lead vai e responde na hora.
 Também bloqueia envios duplicados, grava tudo no PostgreSQL e avisa no Telegram.
 
-**Vídeo:** _adicionar link aqui_
+**Vídeo de demonstração (1min37s):** [assistir no Google Drive](https://drive.google.com/file/d/175xMq2XQgqXqsz7KnXHIfcxXXy-IAYq9/view?usp=sharing)
 
 O que tem aqui:
 
