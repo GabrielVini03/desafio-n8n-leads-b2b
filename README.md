@@ -133,25 +133,46 @@ Exemplo de resposta 200:
 ## Configuração
 
 Tudo fica no arquivo `.env`, que o `setup.sh` cria a partir do `.env.example`. Os valores padrão já
-funcionam. O workflow lê essas variáveis com `$env`, então nenhum endereço ou senha fica fixo no
-fluxo. Depois de mudar o `.env`, rode `docker compose up -d`.
+funcionam, então só é preciso mexer se quiser mudar algo. Depois de editar, rode
+`docker compose up -d`.
 
-| Variável | Padrão | Para quê |
-|---|---|---|
-| `HOST_PORT` | `5678` | Porta do n8n no seu computador |
-| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | `false` | Obrigatória: o n8n 2.x bloqueia o `$env` se ela não estiver como `false` |
-| `VIACEP_BASE_URL` | `https://viacep.com.br` | Endereço do ViaCEP |
-| `BRASILAPI_BASE_URL` | `https://brasilapi.com.br` | Endereço da BrasilAPI |
-| `TELEGRAM_API_BASE_URL` | `https://api.telegram.org` | Endereço da API do Telegram |
-| `HTTP_TIMEOUT_MS` | `5000` | Tempo máximo de espera por cada API |
-| `IDEMPOTENCIA_JANELA_SEGUNDOS` | `300` | Por quanto tempo o mesmo CNPJ fica bloqueado |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `leads`, `n8n_leads`, `n8n_leads_local` | Banco de dados local |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | vazios | Alertas no Telegram (opcional) |
-| `GENERIC_TIMEZONE`, `TZ` | `America/Sao_Paulo` | Fuso horário |
+O workflow lê essas variáveis com `$env`, então nenhum endereço ou senha fica fixo no fluxo.
 
-Para ligar os alertas do Telegram: crie um bot com o @BotFather, abra o bot e toque em Iniciar,
-pegue o seu chat_id em `https://api.telegram.org/bot<TOKEN>/getUpdates` e preencha as duas
-variáveis. Sem elas, o fluxo funciona igual, só não manda alertas.
+**Obrigatória**
+
+- `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: libera o `$env`, que o n8n 2.x bloqueia por padrão.
+
+**Endereços das APIs**
+
+- `VIACEP_BASE_URL=https://viacep.com.br`
+- `BRASILAPI_BASE_URL=https://brasilapi.com.br`
+- `TELEGRAM_API_BASE_URL=https://api.telegram.org`
+
+**Comportamento do fluxo**
+
+- `HTTP_TIMEOUT_MS=5000`: tempo máximo de espera por cada API, em milissegundos.
+- `IDEMPOTENCIA_JANELA_SEGUNDOS=300`: por quanto tempo o mesmo CNPJ fica bloqueado.
+
+**Ambiente local**
+
+- `HOST_PORT=5678`: porta do n8n no seu computador.
+- `POSTGRES_DB=leads`: nome do banco.
+- `POSTGRES_USER=n8n_leads`: usuário do banco.
+- `POSTGRES_PASSWORD=n8n_leads_local`: senha do banco.
+- `GENERIC_TIMEZONE=America/Sao_Paulo` e `TZ=America/Sao_Paulo`: fuso horário.
+
+**Telegram (opcional)**
+
+- `TELEGRAM_BOT_TOKEN`: token do bot.
+- `TELEGRAM_CHAT_ID`: conversa que recebe os alertas.
+
+Vazias, o fluxo funciona igual, só não manda alertas. Para ligar:
+
+1. No Telegram, fale com o **@BotFather**, mande `/newbot` e copie o token que ele devolver.
+2. Abra o bot que você criou e toque em **Iniciar**.
+3. No navegador, abra `https://api.telegram.org/bot<TOKEN>/getUpdates` e copie o número que
+   aparece em `"chat":{"id": ...}`.
+4. Preencha as duas variáveis no `.env` e rode `docker compose up -d`.
 
 ## Como o fluxo funciona
 
